@@ -1,26 +1,48 @@
 {
-  "contract_version": "1.0",
+  "contract_version": "2.0",
   "service_id": "go-qualification",
   "service_name": "业余围棋晋级核算",
-  "scope": "汇集分赛区对局结果、身份归并、破同分计算和总决赛递补依据。",
+  "scope": "汇集四个分赛区名手/名师/名人三组对局结果、身份归并、破同分计算、名额递补与总决赛名单锁定。",
   "actors": [
-    "赛区管理员",
-    "裁判",
-    "棋手",
-    "资格审核员",
-    "总决赛组委会"
+    "organizer:总决赛组委会",
+    "station_admin:赛区管理员",
+    "referee:裁判/裁判长",
+    "jury:仲裁委员会",
+    "auditor:资格审核员",
+    "player:棋手"
   ],
   "states": [
     "已报名",
+    "规则已冻结",
+    "轮次已冻结",
+    "配对已冻结",
     "比赛中",
     "待裁决",
+    "组别名次已确认",
+    "名额已递补",
     "获得资格",
-    "已递补"
+    "总决赛名单已锁定"
   ],
   "invariants": [
-    "每轮原始结果只能由更正事件改变当前效力",
-    "同一棋手不得占用多个总决赛名额",
-    "晋级解释固定使用比赛发生时的规则"
+    "所有事实仅追加：迟到结果、申诉裁决、录入纠错都以引用旧事件的新事件生效，旧事件永不修改或删除",
+    "每轮原始结果只能由更正事件改变当前效力，重投同一事实返回 duplicate_fact，不产生第二条事实",
+    "规则、轮次、配对、破同分次序在开赛前冻结，排名解释固定使用比赛发生时的规则版本",
+    "裁判提交胜负或弃权时必须保留棋谱哈希(record_hash)与签字来源(signature_source)",
+    "同一棋手的多种证件表示经 HMAC 相关标识与显式合并归并；姓名同音只产生人工复核，绝不自动合并",
+    "完整证件明文仅存于密封表，拆封必留审计；跨赛区视图只含最小化状态，不泄露完整身份",
+    "同一 person 全局最多占用一个总决赛晋级位，跨站重复报名者只保留确认在先的席位，余者顺延递补",
+    "退赛或名额递补仅重算受影响组别并通知相关人员，不改动其他组别事实",
+    "总决赛锁定名单后拒绝任何写命令；组委会可解释每位棋手的对局轨迹、规则版本与临界名次依据",
+    "事件全局哈希链可重放校验，任何篡改、删除、重排都导致断链"
+  ],
+  "event_types": [
+    "tournament_created", "station_opened",
+    "player_registered", "identity_linked", "persons_merged",
+    "similar_name_flagged", "similar_name_resolved",
+    "rules_frozen", "rounds_frozen", "pairings_frozen",
+    "result_submitted", "late_result_submitted", "forfeit_recorded",
+    "result_corrected", "appeal_filed", "appeal_amended", "appeal_rejected",
+    "player_withdrawn", "group_confirmed", "quota_adjusted",
+    "finals_locked", "notification_emitted"
   ]
 }
-

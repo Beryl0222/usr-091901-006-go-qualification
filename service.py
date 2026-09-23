@@ -1,9 +1,20 @@
-"""业余围棋晋级核算的基础服务入口。"""
+"""业余围棋晋级核算服务入口。
+
+- python3 service.py --check              配置与事件链自检
+- python3 service.py --port 8000 [--db gq.db]
+    GET  /health /contract
+    赛事、报名、冻结、结果/弃权/迟到/更正/申诉、确认、锁榜、解释与审计接口
+    详见 api.py 与 README.md
+"""
 
 import argparse
 import json
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
 from pathlib import Path
+
+from api import api_handler
+from store import EventStore
+from tournament.domain import TournamentService
 
 SERVICE_ID = "go-qualification"
 SERVICE_NAME = "业余围棋晋级核算"
@@ -23,27 +34,34 @@ def health_payload():
     return {"status": "ok", "service": SERVICE_ID, "name": SERVICE_NAME}
 
 
-class Handler(BaseHTTPRequestHandler):
-    """提供健康检查和领域契约读取接口。"""
-    def do_GET(self):
-        if self.path == "/health": self._send_json(health_payload()); return
-        if self.path == "/contract": self._send_json(load_contract()); return
-        self.send_error(404)
-    def _send_json(self, payload):
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.send_response(200); self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
-    def log_message(self, *_args): return
+def build_service(db_path: str = ":memory:") -> TournamentService:
+    store = EventStore(db_path)
+    return TournamentService(store)
 
 
 def main():
     parser = argparse.ArgumentParser(description=SERVICE_NAME)
-    parser.add_argument("--port", type=int, default=8000); parser.add_argument("--check", action="store_true")
+    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--db", default=":memory:", help="事件库 SQLite 路径（默认纯内存）")
+    parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
+
+    contract = load_contract()
     if args.check:
-        contract = load_contract(); assert contract["states"] and contract["invariants"]; print("基础检查通过"); return
-    ThreadingHTTPServer(("0.0.0.0", args.port), Handler).serve_forever()
+        assert contract["states"] and contract["invariants"]
+        if args.db != ":memory:" and Path(args.db).exists():
+            result = build_service(args.db).verify()
+            assert result["ok"], f"事件链校验失败: {result}"
+            print(f"基础检查通过；事件链 {result['events']} 事件 / {result['streams']} 流")
+        else:
+            print("基础检查通过")
+        return
+
+    svc = build_service(args.db)
+    handler = api_handler(svc)
+    print(f"{SERVICE_NAME} 监听 0.0.0.0:{args.port}（事件库 {args.db}）")
+    ThreadingHTTPServer(("0.0.0.0", args.port), handler).serve_forever()
 
 
-if __name__ == "__main__": main()
-
+if __name__ == "__main__":
+    main()

@@ -1,9 +1,18 @@
-"""业余围棋晋级核算的基础服务入口。"""
+"""业余围棋晋级核算服务入口。
+
+* python3 service.py --check            基础配置检查
+* python3 service.py --port 8000        启动赛事资格与核算 API
+* python3 service.py --port 8000 --store events.jsonl
+                                       启用事件日志持久化（重启完整重放）
+"""
 
 import argparse
 import json
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
 from pathlib import Path
+
+from api import ApiHandler
+from app import Application
 
 SERVICE_ID = "go-qualification"
 SERVICE_NAME = "业余围棋晋级核算"
@@ -23,27 +32,40 @@ def health_payload():
     return {"status": "ok", "service": SERVICE_ID, "name": SERVICE_NAME}
 
 
-class Handler(BaseHTTPRequestHandler):
-    """提供健康检查和领域契约读取接口。"""
-    def do_GET(self):
-        if self.path == "/health": self._send_json(health_payload()); return
-        if self.path == "/contract": self._send_json(load_contract()); return
-        self.send_error(404)
-    def _send_json(self, payload):
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.send_response(200); self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
-    def log_message(self, *_args): return
+def make_handler(app):
+    """把装配好的应用注入每个请求处理器。"""
+    class BoundHandler(ApiHandler):
+        pass
+    BoundHandler.app = app
+    return BoundHandler
 
 
 def main():
     parser = argparse.ArgumentParser(description=SERVICE_NAME)
-    parser.add_argument("--port", type=int, default=8000); parser.add_argument("--check", action="store_true")
+    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--check", action="store_true")
+    parser.add_argument("--store", type=str, default=None,
+                        help="事件日志 JSONL 路径；不提供则仅驻留内存")
+    parser.add_argument("--secret", type=str,
+                        default="go-qualification-secret",
+                        help="赛区通行码 HMAC 主密钥（生产环境务必另行配置）")
     args = parser.parse_args()
+
     if args.check:
-        contract = load_contract(); assert contract["states"] and contract["invariants"]; print("基础检查通过"); return
-    ThreadingHTTPServer(("0.0.0.0", args.port), Handler).serve_forever()
+        contract = load_contract()
+        assert contract["states"] and contract["invariants"]
+        app = Application()  # 内存态自检：装配与订阅可用
+        assert app.audit()["chain_ok"]
+        print("基础检查通过")
+        return
+
+    app = Application(store_path=args.store, master_secret=args.secret)
+    handler = make_handler(app)
+    print(f"{SERVICE_NAME} 启动于端口 {args.port}，"
+          f"已载入事件 {len(app.store)} 条，尾部 "
+          f"{app.store.tail_hash[:12]}")
+    ThreadingHTTPServer(("0.0.0.0", args.port), handler).serve_forever()
 
 
-if __name__ == "__main__": main()
-
+if __name__ == "__main__":
+    main()
